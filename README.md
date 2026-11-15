@@ -18,9 +18,18 @@ docker compose exec -T backend python -m scripts.seed_demo
 ## 演示账号与权限
 |账号|密码|真实权限|
 |---|---|---|
-|admin@demo.local|Demo123!|接入、执行、批准、分发、暂停、读取与下载|
-|analyst@demo.local|Demo123!|接入、执行、读取与下载；不能批准或安排分发|
+|admin@demo.local|Demo123!|接入、执行、复核签署、分发、暂停/恢复、读取与下载|
+|admin2@demo.local|Demo123!|同上的复核签署权限；与 admin 共同构成两名不同负责人|
+|analyst@demo.local|Demo123!|接入、执行、读取与下载；不能复核签署或安排分发|
 |viewer@demo.local|Demo123!|只读与下载|
+
+## 双人复核规则
+- 分析结论须由两名不同的业务负责人各签一票才生效；单人批准不再有效，发起人必须回避（后端 403）。
+- 每票绑定签署当时的结果指纹（参数 + 计算结果）并保留复核意见；同一负责人重复提交只保留一票，不重复计票。
+- 任一签署人撤签后，分析退回待复核，关联分发计划自动暂停；已发归档不受影响，归档内冻结原签署依据。
+- 撤签与分发并发时以撤签生效为界：撤签之后不再产生新归档，已开算但未发布的分发也会被拦住。
+- 重新凑齐有效签署后，由负责人在分发页手动恢复计划；恢复同样校验双签。
+- 结果页可查每张票的意见、签署/撤签时间线与撤签说明；旧单人批准在启动迁移中转为待复核，历史归档照常可下载。
 
 ## 技术与本地开发
 Python 3.12 / FastAPI / SQLAlchemy / NumPy / SciPy / scikit-learn；MySQL 8.0；Redis 7；Nginx；原生 HTML CSS JavaScript ES modules（用户指定）。后端所有校验、持久化和算法在服务端。无前端打包步骤。
@@ -29,11 +38,12 @@ Python 3.12 / FastAPI / SQLAlchemy / NumPy / SciPy / scikit-learn；MySQL 8.0；
 ## 目录与工程约定
 backend/src/{models,schemas,services,routes,controllers,middlewares,constants,config,utils}；backend/scripts/seed_demo.py；backend/migrations/initial.py。
 frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。
-Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js；路由权限在 middlewares/auth.py；页面按相同角色控制操作入口。
+Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed；ApprovalStatus：pending/approved。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js；路由权限在 middlewares/auth.py；页面按相同角色控制操作入口。
+复核签署数据在 backend/src/models/approval.py（approval_votes 当前票 + approval_events 只追加经过），业务规则在 backend/src/services/approvals.py；增量迁移 backend/src/migrations/reviews.py 随启动执行，只补列、只迁移未迁移的旧记录。
 
 ## 环境变量与 Docker
 COMPOSE_PROJECT_NAME=pack-welch；FRONTEND_PORT=18203；BACKEND_PORT=19203；DB_PORT=17703；DB_PASSWORD、JWT_SECRET 见 .env.example；SEED_DEMO 默认 true。共享命名产物卷供后端下载与 worker 写入，数据库/Redis 各持久卷。
-恰好五服务均有健康检查。Redis 队列加 SQL 排队状态兜底；worker 按 next_run 生成本地收件箱文件。周期 60 秒至 30 天。分发结果为批准分析的固定快照；若需新数据重新计算并建立新计划。当前不连接邮件或企业聊天。
+恰好五服务均有健康检查。Redis 队列加 SQL 排队状态兜底；worker 按 next_run 生成本地收件箱文件。周期 60 秒至 30 天。分发结果为双人复核通过分析的固定快照，归档 JSON 内冻结当时有效签署；若需新数据重新计算并建立新计划。当前不连接邮件或企业聊天。
 错误响应、请求编号、Redis 每 IP 每分钟 240 次限流、JWT 和数据库操作审计。演示密钥与密码仅供本机模拟；生产部署前配置独立密钥与账号。
 
 ## 数据与验收
